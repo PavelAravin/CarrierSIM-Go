@@ -29,6 +29,8 @@ var (
 		"Books/Sync/Database/OutstandingAssets_4.sqlite-wal",
 	}
 	BookDirs = []string{"Books", "Books/Sync", "Books/Sync/Database"}
+	// Locks AirTraffic may create; keep if they already existed.
+	BookLocks = []string{"Managed/.Managed.plist.lock", "Sync/.bookSync.lock"}
 )
 
 type FileInfo struct {
@@ -388,49 +390,93 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-func (c *Client) BooksSnapshot(runDir string) (tree.Tree, bool, error) {
+// SyncBooksTree reads only AirLift-related Books sync metadata (not the whole library).
+// Large EPUB/PDF libraries used to trip MaxBytes via full RemoteTree("Books").
+func (c *Client) SyncBooksTree() (tree.Tree, bool, error) {
 	_, existed, err := c.Exists("Books")
 	if err != nil {
 		return nil, false, err
 	}
-	var t tree.Tree
-	if existed {
-		t, err = c.RemoteTree("Books")
+	t := tree.Tree{}
+	if !existed {
+		return t, false, nil
+	}
+	total := 0
+	for _, p := range BookDirs[1:] {
+		rel := strings.TrimPrefix(p, "Books/")
+		info, ok, err := c.Exists(p)
 		if err != nil {
 			return nil, false, err
 		}
-	} else {
-		t = tree.Tree{}
+		if !ok {
+			continue
+		}
+		if !info.IsDir() {
+			return nil, false, fmt.Errorf("Unexpected Books directory")
+		}
+		t[rel] = tree.Node{Kind: "d"}
+	}
+	readFile := func(abs, rel string) error {
+		info, ok, err := c.Exists(abs)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if !info.IsReg() {
+			return fmt.Errorf("Unexpected Books sync artifact")
+		}
+		if info.Size > tree.MaxBytes {
+			return fmt.Errorf("Remote file limit")
+		}
+		data, err := c.GetFile(abs)
+		if err != nil {
+			return err
+		}
+		total += len(data)
+		if total > tree.MaxBytes || int64(len(data)) != info.Size {
+			return fmt.Errorf("Remote size mismatch")
+		}
+		t[rel] = tree.Node{Kind: "f", Data: data}
+		return nil
+	}
+	for _, p := range BookFiles {
+		rel := strings.TrimPrefix(p, "Books/")
+		if err := readFile(p, rel); err != nil {
+			return nil, false, err
+		}
+	}
+	for _, rel := range BookLocks {
+		if err := readFile("Books/"+rel, rel); err != nil {
+			return nil, false, err
+		}
+	}
+	if err := tree.Validate(t); err != nil {
+		return nil, false, err
+	}
+	return t, true, nil
+}
+
+func (c *Client) BooksSnapshot(runDir string) (tree.Tree, bool, error) {
+	t, existed, err := c.SyncBooksTree()
+	if err != nil {
+		return nil, false, err
 	}
 	if err := tree.WriteZip(runDir+"/books.zip", t); err != nil {
 		return nil, false, err
 	}
-	if err := run.SaveJSON(runDir+"/books.json", map[string]interface{}{"existed": existed, "hash": tree.Hash(t)}); err != nil {
+	if err := run.SaveJSON(runDir+"/books.json", map[string]interface{}{
+		"existed": existed, "hash": tree.Hash(t), "scope": "sync-only",
+	}); err != nil {
 		return nil, false, err
 	}
-	var check tree.Tree
-	if existed {
-		check, err = c.RemoteTree("Books")
-		if err != nil {
-			return nil, false, err
-		}
-	} else {
-		check = tree.Tree{}
+	check, _, err := c.SyncBooksTree()
+	if err != nil {
+		return nil, false, err
 	}
 	if !tree.Equal(t, check) {
 		return nil, false, fmt.Errorf("Books changed before staging")
-	}
-	for _, p := range BookFiles {
-		rel := strings.TrimPrefix(p, "Books/")
-		if n, ok := t[rel]; ok && n.Kind != "f" {
-			return nil, false, fmt.Errorf("Unexpected Books sync artifact")
-		}
-	}
-	for _, p := range BookDirs[1:] {
-		rel := strings.TrimPrefix(p, "Books/")
-		if n, ok := t[rel]; ok && n.Kind != "d" {
-			return nil, false, fmt.Errorf("Unexpected Books directory")
-		}
 	}
 	return t, existed, nil
 }
@@ -465,7 +511,7 @@ func (c *Client) RestoreBooks(t tree.Tree, existed bool) error {
 			}
 		}
 	}
-	for _, rel := range []string{"Managed/.Managed.plist.lock", "Sync/.bookSync.lock"} {
+	for _, rel := range BookLocks {
 		if _, has := t[rel]; has {
 			continue
 		}
@@ -505,16 +551,11 @@ func (c *Client) RestoreBooks(t tree.Tree, existed bool) error {
 			}
 		}
 	}
-	var after tree.Tree
-	if _, ok, _ := c.Exists("Books"); ok {
-		var err error
-		after, err = c.RemoteTree("Books")
-		if err != nil {
-			return err
-		}
-	} else {
-		after = tree.Tree{}
+	after, _, err := c.SyncBooksTree()
+	if err != nil {
+		return err
 	}
+	// Compare only sync artifacts we manage; ignore the rest of the Books library.
 	if !tree.Equal(after, t) {
 		return fmt.Errorf("Books state differs; backups retained, inspect before retry")
 	}
