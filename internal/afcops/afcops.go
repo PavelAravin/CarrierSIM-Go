@@ -402,6 +402,13 @@ func (c *Client) SyncBooksTree() (tree.Tree, bool, error) {
 		return t, false, nil
 	}
 	total := 0
+	ensureParents := func(rel string) {
+		for parent := path.Dir(rel); parent != "." && parent != "/"; parent = path.Dir(parent) {
+			if _, ok := t[parent]; !ok {
+				t[parent] = tree.Node{Kind: "d"}
+			}
+		}
+	}
 	for _, p := range BookDirs[1:] {
 		rel := strings.TrimPrefix(p, "Books/")
 		info, ok, err := c.Exists(p)
@@ -414,6 +421,7 @@ func (c *Client) SyncBooksTree() (tree.Tree, bool, error) {
 		if !info.IsDir() {
 			return nil, false, fmt.Errorf("Unexpected Books directory")
 		}
+		ensureParents(rel)
 		t[rel] = tree.Node{Kind: "d"}
 	}
 	readFile := func(abs, rel string) error {
@@ -438,6 +446,7 @@ func (c *Client) SyncBooksTree() (tree.Tree, bool, error) {
 		if total > tree.MaxBytes || int64(len(data)) != info.Size {
 			return fmt.Errorf("Remote size mismatch")
 		}
+		ensureParents(rel)
 		t[rel] = tree.Node{Kind: "f", Data: data}
 		return nil
 	}
