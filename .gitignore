@@ -1,0 +1,15 @@
+# Build artifacts (root binary only — do not ignore cmd/carriersim/)
+/carriersim
+/carriersim.exe
+/*.exe
+/*.test
+
+# Runtime journals (may contain device/SIM identifiers)
+/runs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

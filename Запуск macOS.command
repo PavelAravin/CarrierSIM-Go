@@ -1,20 +1,14 @@
 #!/bin/bash
 cd -- "$(dirname -- "$0")" || exit 1
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-export PYTHONUTF8=1
-carrier_python=""
-for candidate in python3.12 python3.11 python3.13 python3.14 python3; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; assert sys.version_info >= (3,11)' >/dev/null 2>&1; then
-        carrier_python="$(command -v "$candidate")"
-        break
-    fi
-done
-if [ -z "$carrier_python" ]; then
-    echo 'Установите Python 3.11 или новее: https://www.python.org/downloads/macos/'
-    carrier_status=1
-else
-    "$carrier_python" -u launch.py "$@"
+if [ -x "./carriersim" ]; then
+    ./carriersim "$@"
     carrier_status=$?
+elif [ -x "./carriersim.exe" ]; then
+    ./carriersim.exe "$@"
+    carrier_status=$?
+else
+    echo 'Не найден carriersim. Соберите: go build -o carriersim ./cmd/carriersim'
+    carrier_status=1
 fi
 if [ "$carrier_status" -ne 0 ] && [ "$#" -eq 0 ] && [ -t 0 ]; then
     read -r -p 'Нажмите Enter, чтобы закрыть окно…' carrier_reply

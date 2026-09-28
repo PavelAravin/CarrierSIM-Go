@@ -1,4 +1,0 @@
-pymobiledevice3==11.12.5
-pyimg4==0.8.8
-# cryptography 49+ ships no Intel macOS wheels; newer versions would need Rust and OpenSSL to build.
-cryptography<49; sys_platform == "darwin" and platform_machine == "x86_64"
