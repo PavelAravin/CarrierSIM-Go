@@ -37,6 +37,8 @@ func main() {
 }
 
 func runMain() int {
+	ui.EnableConsole()
+
 	if len(os.Args) > 1 && os.Args[1] == "--_host" {
 		return runHostMode()
 	}
